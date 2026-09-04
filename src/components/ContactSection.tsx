@@ -1,5 +1,6 @@
 import { contact } from '../content/resume';
 import { FadeUp } from './FadeUp';
+import { ResumeDownloadLink } from './ResumeDownloadLink';
 
 export function ContactSection() {
   return (
@@ -15,17 +16,13 @@ export function ContactSection() {
             {contact.email}
           </a>
           <div className="contact-actions">
+            <ResumeDownloadLink className="text-action" />
             <a className="text-action" href="#top">
               <span>返回顶部</span>
               <span aria-hidden="true">↑</span>
             </a>
           </div>
         </FadeUp>
-
-        <div className="contact-footnote">
-          <span>何佳兴 · AI PRODUCT MANAGER</span>
-          <span>2026</span>
-        </div>
       </div>
     </footer>
   );

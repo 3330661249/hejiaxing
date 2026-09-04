@@ -1,11 +1,43 @@
 import { useEffect, useRef, useState } from 'react';
-import { useReducedMotion } from 'framer-motion';
 import { VIDEO_SOURCE } from '../content/resume';
+import {
+  FINE_POINTER_QUERY,
+  REDUCED_MOTION_QUERY,
+  subscribeToMediaQuery,
+} from '../utils/mediaQuery';
 
-const POINTER_MOTION_QUERY =
-  '(min-width: 901px) and (hover: hover) and (pointer: fine)';
+const HORIZONTAL_SHIFT_RANGE = 60;
+const VERTICAL_SHIFT_RANGE = 32;
+const LENS_FADE_START = 0.48;
+const LENS_FADE_END = 0.82;
+const SHIFT_FOLLOW_RATE = 0.18;
+const LENS_FOLLOW_RATE = 0.22;
+const OPACITY_FOLLOW_RATE = 0.16;
+const LENS_RESTING_STRENGTH = 0.78;
+const LENS_MOTION_BOOST = 1 - LENS_RESTING_STRENGTH;
+const FULL_MOTION_SPEED = 1.6;
+const MOTION_ENERGY_DECAY_PER_MS = 1 / 360;
+const DEFAULT_FRAME_DURATION = 1000 / 60;
+const MAX_FRAME_DURATION = 32;
 
-type VisualState = {
+function smoothstep(start: number, end: number, value: number) {
+  const progress = Math.min(1, Math.max(0, (value - start) / (end - start)));
+  return progress * progress * (3 - 2 * progress);
+}
+
+function easeToward(
+  current: number,
+  target: number,
+  rate: number,
+  settleDistance: number,
+) {
+  const distance = target - current;
+  return Math.abs(distance) <= settleDistance
+    ? target
+    : current + distance * rate;
+}
+
+type BackgroundVisualState = {
   shiftX: number;
   shiftY: number;
   lensX: number;
@@ -13,7 +45,7 @@ type VisualState = {
   lensOpacity: number;
 };
 
-const CENTERED_STATE: VisualState = {
+const CENTERED_VISUAL_STATE: BackgroundVisualState = {
   shiftX: 0,
   shiftY: 0,
   lensX: 50,
@@ -21,136 +53,316 @@ const CENTERED_STATE: VisualState = {
   lensOpacity: 0,
 };
 
-const easeToward = (current: number, target: number, rate: number) =>
-  current + (target - current) * rate;
-
 export function BackgroundVideo() {
   const videoRef = useRef<HTMLVideoElement>(null);
   const overlayRef = useRef<HTMLDivElement>(null);
+  const mediaStateRef = useRef<'loading' | 'ready' | 'failed'>('loading');
   const [mediaState, setMediaState] = useState<'loading' | 'ready' | 'failed'>(
     'loading',
   );
   const [pointerMotionEnabled, setPointerMotionEnabled] = useState(false);
-  const shouldReduceMotion = useReducedMotion();
-
-  useEffect(() => {
-    if (shouldReduceMotion) {
-      videoRef.current?.pause();
-    }
-  }, [shouldReduceMotion]);
 
   useEffect(() => {
     const video = videoRef.current;
     const overlay = overlayRef.current;
 
-    if (!video || !overlay || typeof window.matchMedia !== 'function') {
-      return undefined;
+    if (!video || !overlay) {
+      return;
     }
 
-    const pointerQuery = window.matchMedia(POINTER_MOTION_QUERY);
-    let current = { ...CENTERED_STATE };
-    let target = { ...CENTERED_STATE };
     let animationFrame: number | null = null;
+    let currentState = { ...CENTERED_VISUAL_STATE };
+    let targetState = { ...CENTERED_VISUAL_STATE };
+    let lensBaseOpacity = 0;
+    let motionEnergy = 0;
+    let lastPointerX: number | null = null;
+    let lastPointerY: number | null = null;
+    let lastPointerTime: number | null = null;
+    let lastAnimationTime: number | null = null;
 
-    const apply = () => {
-      video.style.setProperty('--background-shift-x', `${current.shiftX.toFixed(2)}px`);
-      video.style.setProperty('--background-shift-y', `${current.shiftY.toFixed(2)}px`);
-      overlay.style.setProperty('--background-lens-x', `${current.lensX.toFixed(2)}%`);
-      overlay.style.setProperty('--background-lens-y', `${current.lensY.toFixed(2)}%`);
+    const formatUnit = (value: number, unit: 'px' | '%') =>
+      `${Number(value.toFixed(2))}${unit}`;
+
+    const applyVisualState = (state: BackgroundVisualState) => {
+      video.style.setProperty(
+        '--background-shift-x',
+        formatUnit(state.shiftX, 'px'),
+      );
+      video.style.setProperty(
+        '--background-shift-y',
+        formatUnit(state.shiftY, 'px'),
+      );
+      overlay.style.setProperty(
+        '--background-lens-x',
+        formatUnit(state.lensX, '%'),
+      );
+      overlay.style.setProperty(
+        '--background-lens-y',
+        formatUnit(state.lensY, '%'),
+      );
       overlay.style.setProperty(
         '--background-lens-opacity',
-        current.lensOpacity.toFixed(3),
+        String(state.lensOpacity),
       );
     };
 
-    const tick = () => {
-      current = {
-        shiftX: easeToward(current.shiftX, target.shiftX, 0.075),
-        shiftY: easeToward(current.shiftY, target.shiftY, 0.075),
-        lensX: easeToward(current.lensX, target.lensX, 0.09),
-        lensY: easeToward(current.lensY, target.lensY, 0.09),
-        lensOpacity: easeToward(current.lensOpacity, target.lensOpacity, 0.08),
+    const applyMotionEnergy = () => {
+      overlay.style.setProperty(
+        '--background-motion-energy',
+        String(Number(motionEnergy.toFixed(3))),
+      );
+    };
+
+    const clearMotionEnergy = () => {
+      motionEnergy = 0;
+      lastPointerX = null;
+      lastPointerY = null;
+      lastPointerTime = null;
+      applyMotionEnergy();
+    };
+
+    const animateVisualState = (timestamp: number) => {
+      const elapsed =
+        lastAnimationTime === null
+          ? DEFAULT_FRAME_DURATION
+          : Math.min(
+              MAX_FRAME_DURATION,
+              Math.max(0, timestamp - lastAnimationTime),
+            );
+      lastAnimationTime = timestamp;
+      currentState = {
+        shiftX: easeToward(
+          currentState.shiftX,
+          targetState.shiftX,
+          SHIFT_FOLLOW_RATE,
+          0.04,
+        ),
+        shiftY: easeToward(
+          currentState.shiftY,
+          targetState.shiftY,
+          SHIFT_FOLLOW_RATE,
+          0.04,
+        ),
+        lensX: easeToward(
+          currentState.lensX,
+          targetState.lensX,
+          LENS_FOLLOW_RATE,
+          0.04,
+        ),
+        lensY: easeToward(
+          currentState.lensY,
+          targetState.lensY,
+          LENS_FOLLOW_RATE,
+          0.04,
+        ),
+        lensOpacity: easeToward(
+          currentState.lensOpacity,
+          targetState.lensOpacity,
+          OPACITY_FOLLOW_RATE,
+          0.002,
+        ),
       };
-      apply();
+      applyVisualState(currentState);
 
-      const remaining =
-        Math.abs(current.shiftX - target.shiftX) +
-        Math.abs(current.shiftY - target.shiftY) +
-        Math.abs(current.lensX - target.lensX) +
-        Math.abs(current.lensY - target.lensY) +
-        Math.abs(current.lensOpacity - target.lensOpacity);
+      if (motionEnergy > 0) {
+        motionEnergy = Math.max(
+          0,
+          motionEnergy - MOTION_ENERGY_DECAY_PER_MS * elapsed,
+        );
+        applyMotionEnergy();
+        targetState = {
+          ...targetState,
+          lensOpacity:
+            lensBaseOpacity *
+            (LENS_RESTING_STRENGTH + LENS_MOTION_BOOST * motionEnergy),
+        };
+      }
 
-      if (remaining > 0.04) {
-        animationFrame = window.requestAnimationFrame(tick);
-      } else {
-        current = { ...target };
-        apply();
+      const isSettled =
+        currentState.shiftX === targetState.shiftX &&
+        currentState.shiftY === targetState.shiftY &&
+        currentState.lensX === targetState.lensX &&
+        currentState.lensY === targetState.lensY &&
+        currentState.lensOpacity === targetState.lensOpacity &&
+        motionEnergy === 0;
+
+      if (isSettled) {
         animationFrame = null;
+        lastAnimationTime = null;
+      } else {
+        animationFrame = window.requestAnimationFrame(animateVisualState);
       }
     };
 
-    const schedule = () => {
+    const scheduleVisualState = (state: BackgroundVisualState) => {
+      targetState = state;
       if (animationFrame === null) {
-        animationFrame = window.requestAnimationFrame(tick);
+        lastAnimationTime = null;
+        animationFrame = window.requestAnimationFrame(animateVisualState);
       }
     };
 
-    const canMove = () => pointerQuery.matches && !shouldReduceMotion;
+    applyVisualState(CENTERED_VISUAL_STATE);
+    applyMotionEnergy();
 
-    const syncCapability = () => {
-      const enabled = canMove();
-      setPointerMotionEnabled(enabled);
-      if (!enabled) {
-        target = { ...CENTERED_STATE };
-        schedule();
+    if (typeof window.matchMedia !== 'function') {
+      setPointerMotionEnabled(false);
+      return;
+    }
+
+    const pointerMotionQuery = window.matchMedia(FINE_POINTER_QUERY);
+    const reducedMotionQuery = window.matchMedia(REDUCED_MOTION_QUERY);
+    let wasReducedMotion = reducedMotionQuery.matches;
+    const canUsePointerMotion = () =>
+      pointerMotionQuery.matches && !reducedMotionQuery.matches;
+
+    const syncPointerCapability = () => {
+      const isReducedMotion = reducedMotionQuery.matches;
+      const isEnabled = canUsePointerMotion();
+      setPointerMotionEnabled(isEnabled);
+      if (isReducedMotion) {
+        video.pause();
+      } else if (wasReducedMotion) {
+        try {
+          void video.play().catch(() => undefined);
+        } catch {
+          // Autoplay can be unavailable; the static poster remains usable.
+        }
+      }
+      wasReducedMotion = isReducedMotion;
+      if (!isEnabled) {
+        lensBaseOpacity = 0;
+        clearMotionEnergy();
+        scheduleVisualState(CENTERED_VISUAL_STATE);
       }
     };
 
     const handlePointerMove = (event: PointerEvent) => {
-      if (!canMove() || event.pointerType !== 'mouse') {
+      if (event.pointerType !== 'mouse' || !canUsePointerMotion()) {
         return;
       }
 
-      const x = Math.min(1, Math.max(0, event.clientX / Math.max(window.innerWidth, 1)));
-      const y = Math.min(1, Math.max(0, event.clientY / Math.max(window.innerHeight, 1)));
-      target = {
-        shiftX: (0.5 - x) * 60,
-        shiftY: (0.5 - y) * 32,
-        lensX: x * 100,
-        lensY: y * 100,
-        lensOpacity: mediaState === 'ready' ? 0.92 : 0,
-      };
-      schedule();
+      const width = Math.max(window.innerWidth, 1);
+      const height = Math.max(window.innerHeight, 1);
+      const horizontalProgress = Math.min(
+        1,
+        Math.max(0, event.clientX / width),
+      );
+      const verticalProgress = Math.min(
+        1,
+        Math.max(0, event.clientY / height),
+      );
+      if (
+        lastPointerX !== null &&
+        lastPointerY !== null &&
+        lastPointerTime !== null
+      ) {
+        const travelDistance = Math.hypot(
+          event.clientX - lastPointerX,
+          event.clientY - lastPointerY,
+        );
+        const elapsedSincePointer = event.timeStamp - lastPointerTime;
+        if (elapsedSincePointer > 0) {
+          const pointerSpeed =
+            travelDistance / Math.max(8, elapsedSincePointer);
+          motionEnergy = Math.max(
+            motionEnergy,
+            Math.min(1, pointerSpeed / FULL_MOTION_SPEED),
+          );
+        }
+      }
+      lastPointerX = event.clientX;
+      lastPointerY = event.clientY;
+      lastPointerTime = event.timeStamp;
+      applyMotionEnergy();
+      lensBaseOpacity =
+        mediaStateRef.current === 'ready'
+          ? smoothstep(LENS_FADE_START, LENS_FADE_END, horizontalProgress)
+          : 0;
+
+      scheduleVisualState({
+        shiftX: (0.5 - horizontalProgress) * HORIZONTAL_SHIFT_RANGE,
+        shiftY: (0.5 - verticalProgress) * VERTICAL_SHIFT_RANGE,
+        lensX: horizontalProgress * 100,
+        lensY: verticalProgress * 100,
+        lensOpacity:
+          lensBaseOpacity *
+          (LENS_RESTING_STRENGTH + LENS_MOTION_BOOST * motionEnergy),
+      });
     };
 
-    const reset = () => {
-      target = { ...CENTERED_STATE };
-      schedule();
+    const resetPointerMotion = () => {
+      if (canUsePointerMotion()) {
+        lensBaseOpacity = 0;
+        clearMotionEnergy();
+        scheduleVisualState(CENTERED_VISUAL_STATE);
+      }
     };
 
     const handlePointerOut = (event: PointerEvent) => {
       if (event.relatedTarget === null) {
-        reset();
+        resetPointerMotion();
       }
     };
 
-    apply();
-    syncCapability();
-    pointerQuery.addEventListener('change', syncCapability);
-    window.addEventListener('pointermove', handlePointerMove, { passive: true });
-    window.addEventListener('pointerout', handlePointerOut);
-    window.addEventListener('blur', reset);
+    const unsubscribePointerMotion = subscribeToMediaQuery(
+      pointerMotionQuery,
+      syncPointerCapability,
+    );
+    const unsubscribeReducedMotion = subscribeToMediaQuery(
+      reducedMotionQuery,
+      syncPointerCapability,
+    );
+
+    if (!unsubscribePointerMotion || !unsubscribeReducedMotion) {
+      unsubscribePointerMotion?.();
+      unsubscribeReducedMotion?.();
+      setPointerMotionEnabled(false);
+      lensBaseOpacity = 0;
+      clearMotionEnergy();
+      applyVisualState(CENTERED_VISUAL_STATE);
+      if (reducedMotionQuery.matches) {
+        video.pause();
+      }
+      return () => {
+        if (animationFrame !== null) {
+          window.cancelAnimationFrame(animationFrame);
+        }
+      };
+    }
+
+    try {
+      window.addEventListener('pointermove', handlePointerMove, {
+        passive: true,
+      });
+      window.addEventListener('pointerout', handlePointerOut);
+      window.addEventListener('blur', resetPointerMotion);
+    } catch {
+      window.removeEventListener('pointermove', handlePointerMove);
+      window.removeEventListener('pointerout', handlePointerOut);
+      window.removeEventListener('blur', resetPointerMotion);
+      unsubscribePointerMotion();
+      unsubscribeReducedMotion();
+      setPointerMotionEnabled(false);
+      lensBaseOpacity = 0;
+      clearMotionEnergy();
+      applyVisualState(CENTERED_VISUAL_STATE);
+      return;
+    }
+
+    syncPointerCapability();
 
     return () => {
       if (animationFrame !== null) {
         window.cancelAnimationFrame(animationFrame);
       }
-      pointerQuery.removeEventListener('change', syncCapability);
+      unsubscribePointerMotion();
+      unsubscribeReducedMotion();
       window.removeEventListener('pointermove', handlePointerMove);
       window.removeEventListener('pointerout', handlePointerOut);
-      window.removeEventListener('blur', reset);
+      window.removeEventListener('blur', resetPointerMotion);
     };
-  }, [mediaState, shouldReduceMotion]);
+  }, []);
 
   return (
     <>
@@ -167,14 +379,19 @@ export function BackgroundVideo() {
         data-media-state={mediaState}
         data-pointer-motion={pointerMotionEnabled ? 'enabled' : 'disabled'}
         hidden={mediaState === 'failed'}
-        onCanPlay={() => setMediaState('ready')}
-        onError={() => setMediaState('failed')}
+        onLoadedData={() => {
+          mediaStateRef.current = 'ready';
+          setMediaState('ready');
+        }}
+        onError={() => {
+          mediaStateRef.current = 'failed';
+          setMediaState('failed');
+        }}
       />
       <div
         ref={overlayRef}
         className="background-overlay"
         data-background-overlay=""
-        data-media-state={mediaState}
         aria-hidden="true"
       />
     </>

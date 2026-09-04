@@ -1,7 +1,7 @@
 export type NavigationItem = {
   label: string;
   href: string;
-  kind: 'anchor';
+  kind: 'anchor' | 'download';
 };
 
 export type ProjectDetail = {
@@ -16,6 +16,7 @@ export type ResumeProject = {
   title: string;
   meta: string;
   sections: readonly ProjectDetail[];
+  resultNote: string;
 };
 
 export type Experience = {
@@ -23,7 +24,7 @@ export type Experience = {
   role: string;
   dates: string;
   summary: string;
-  projectHref: ResumeProject['id'] extends infer _Id ? string : never;
+  projectHref: `#${ResumeProject['id']}`;
   projectLabel: string;
 };
 
@@ -32,7 +33,12 @@ export type Practice = {
   text: string;
 };
 
-export const VIDEO_SOURCE = './background-loop.mp4';
+export const VIDEO_SOURCE = './media/background-loop.mp4';
+
+export const resumeDownload = {
+  href: './he-jiaxing-ai-product-manager-resume.pdf',
+  downloadName: '何佳兴_AI产品经理_简历.pdf',
+} as const;
 
 export const navigation = [
   {
@@ -44,13 +50,29 @@ export const navigation = [
   { label: '工作经历', href: '#experience', kind: 'anchor' },
   { label: '个人实践', href: '#ai-lab', kind: 'anchor' },
   { label: '关于我', href: '#about', kind: 'anchor' },
+  {
+    label: '下载简历',
+    href: resumeDownload.href,
+    kind: 'download',
+  },
 ] as const satisfies readonly NavigationItem[];
 
 export const profile = {
   eyebrow: 'HE JIAXING / AI PRODUCT MANAGER',
-  title: '何佳兴',
-  titleWords: ['何佳兴'],
-  description: '连接 AI 技术与用户真实需求',
+  title: '我把复杂业务，做成可评测、可交付的 AI 产品。',
+  titleWords: [
+    '我把',
+    '复杂业务，',
+    '做成',
+    '可评测、',
+    '可交付的',
+    ' ',
+    'AI',
+    ' ',
+    '产品。',
+  ],
+  description:
+    '关注 RAG、Agent 与语音交互，连接业务调研、方案设计、模型评测和产品交付。',
   primaryAction: { label: '查看核心项目', href: '#selected-work' },
 } as const;
 
@@ -77,9 +99,11 @@ export const projects = [
       },
       {
         label: '项目结果',
-        text: '内部任务成功率达到 82%。',
+        text: '按简历现有口径，内部任务成功率约 82%。',
       },
     ],
+    resultNote:
+      '该结果为简历中的项目口径，不扩写为个人独立开发或未经核验的生产指标。',
   },
   {
     id: 'project-voice-assistant',
@@ -103,9 +127,11 @@ export const projects = [
       },
       {
         label: '项目结果',
-        text: '项目准召率达到 97%，查询效率提升约 85%。',
+        text: '按简历现有口径，项目记录的“准召率”为 97%，查询效率提升约 85%。',
       },
     ],
+    resultNote:
+      '“准召率”保持简历原文，不解释为特定算法口径；两项结果不扩写为个人独立成果。',
   },
 ] as const satisfies readonly ResumeProject[];
 

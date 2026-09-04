@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { navigation } from '../content/resume';
+import { ResumeDownloadLink } from './ResumeDownloadLink';
 
 const FOCUSABLE_SELECTOR =
   'a[href], button:not([disabled]), [tabindex]:not([tabindex="-1"])';
@@ -34,14 +35,15 @@ export function SiteHeader({ mainId }: SiteHeaderProps) {
     }
 
     const desktopQuery = window.matchMedia('(min-width: 901px)');
-    const closeMenuAtDesktop = () => {
-      if (desktopQuery.matches) {
+    const closeMenuOnDesktop = (event: MediaQueryListEvent) => {
+      if (event.matches) {
         setMenuOpen(false);
       }
     };
 
-    desktopQuery.addEventListener('change', closeMenuAtDesktop);
-    return () => desktopQuery.removeEventListener('change', closeMenuAtDesktop);
+    desktopQuery.addEventListener('change', closeMenuOnDesktop);
+    return () =>
+      desktopQuery.removeEventListener('change', closeMenuOnDesktop);
   }, []);
 
   useEffect(() => {
@@ -68,7 +70,7 @@ export function SiteHeader({ mainId }: SiteHeaderProps) {
       if (event.key === 'Escape') {
         event.preventDefault();
         setMenuOpen(false);
-        window.setTimeout(() => triggerRef.current?.focus(), 0);
+        triggerRef.current?.focus();
         return;
       }
 
@@ -111,7 +113,7 @@ export function SiteHeader({ mainId }: SiteHeaderProps) {
 
   const closeAndRestoreFocus = () => {
     setMenuOpen(false);
-    window.setTimeout(() => triggerRef.current?.focus(), 0);
+    triggerRef.current?.focus();
   };
 
   return (
@@ -131,6 +133,8 @@ export function SiteHeader({ mainId }: SiteHeaderProps) {
             </a>
           ))}
         </nav>
+
+        <ResumeDownloadLink className="header-download" />
 
         <button
           ref={triggerRef}
@@ -164,7 +168,9 @@ export function SiteHeader({ mainId }: SiteHeaderProps) {
                   aria-label={item.label}
                   onClick={() => setMenuOpen(false)}
                 >
-                  <span aria-hidden="true">{String(index + 1).padStart(2, '0')}</span>
+                  <span aria-hidden="true">
+                    {String(index + 1).padStart(2, '0')}
+                  </span>
                   <strong>{item.label}</strong>
                   <span aria-hidden="true">↘</span>
                 </a>

@@ -19,7 +19,6 @@ export default function App() {
         跳到主要内容
       </a>
       <SiteHeader mainId="main-content" />
-
       <div className="site-content">
         <main id="main-content">
           <HeroSection />

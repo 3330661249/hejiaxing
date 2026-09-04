@@ -32,6 +32,9 @@ export function ProjectSection({ project }: ProjectSectionProps) {
               <dt>{section.label}</dt>
               <dd>
                 <p>{section.text}</p>
+                {section.label === '项目结果' ? (
+                  <p className="result-note">{project.resultNote}</p>
+                ) : null}
               </dd>
             </FadeUp>
           ))}
