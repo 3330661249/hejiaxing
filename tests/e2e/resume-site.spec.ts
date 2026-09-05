@@ -4,8 +4,8 @@ import { expect, test, type Page } from '@playwright/test';
 const VIDEO_HOST = 'https://d8j0ntlcm91z4.cloudfront.net/';
 const FONT_HOST = 'https://db.onlinewebfonts.com/';
 const LOCAL_ORIGIN = 'http://127.0.0.1:4173';
-const LOCAL_VIDEO_URL = `${LOCAL_ORIGIN}/media/background-loop.mp4`;
-const LOCAL_VIDEO_PATTERN = '**/media/background-loop.mp4';
+const LOCAL_MEDIA_ROOT = `${LOCAL_ORIGIN}/media/`;
+const LOCAL_BACKGROUND_PATTERN = '**/media/background-*.mp4';
 const PDF_HREF = './he-jiaxing-ai-product-manager-resume.pdf';
 const PDF_PATH = '/he-jiaxing-ai-product-manager-resume.pdf';
 const DOWNLOAD_NAME = '何佳兴_AI产品经理_简历.pdf';
@@ -23,7 +23,7 @@ const SECTION_IDS = [
 
 async function isolateExternalMedia(page: Page) {
   await page.route(`${VIDEO_HOST}**`, (route) => route.abort());
-  await page.route(LOCAL_VIDEO_PATTERN, (route) => route.abort());
+  await page.route(LOCAL_BACKGROUND_PATTERN, (route) => route.abort());
   await page.route(`${FONT_HOST}**`, (route) => route.abort());
 }
 
@@ -42,7 +42,7 @@ function observeApplicationFailures(page: Page) {
     const belongsToExpectedMediaFailure = [
       VIDEO_HOST,
       FONT_HOST,
-      LOCAL_VIDEO_URL,
+      LOCAL_MEDIA_ROOT,
     ].some(
       (resource) =>
         sourceUrl.startsWith(resource) || messageText.includes(resource),
@@ -94,22 +94,24 @@ async function expectNoHorizontalOverflow(page: Page) {
 
 async function readBackgroundMotion(page: Page) {
   return page.evaluate(() => {
-    const video = document.querySelector<HTMLVideoElement>('.background-video');
+    const stage = document.querySelector<HTMLElement>(
+      '[data-background-stage]',
+    );
     const overlay = document.querySelector<HTMLElement>(
       '[data-background-overlay]',
     );
     const content = document.querySelector<HTMLElement>('.site-content');
 
-    if (!video || !overlay || !content) {
+    if (!stage || !overlay || !content) {
       return null;
     }
 
     const lensStyle = getComputedStyle(overlay, '::after');
 
     return {
-      pointerMotion: video.dataset.pointerMotion ?? null,
-      shiftX: video.style.getPropertyValue('--background-shift-x'),
-      shiftY: video.style.getPropertyValue('--background-shift-y'),
+      pointerMotion: stage.dataset.pointerMotion ?? null,
+      shiftX: stage.style.getPropertyValue('--background-shift-x'),
+      shiftY: stage.style.getPropertyValue('--background-shift-y'),
       lensX: overlay.style.getPropertyValue('--background-lens-x'),
       lensY: overlay.style.getPropertyValue('--background-lens-y'),
       lensOpacity: overlay.style.getPropertyValue(
@@ -121,15 +123,39 @@ async function readBackgroundMotion(page: Page) {
       lensRenderedOpacity: lensStyle.opacity,
       lensMaskImage: lensStyle.maskImage || lensStyle.webkitMaskImage,
       lensDisplay: lensStyle.display,
-      videoTransform: getComputedStyle(video).transform,
-      videoWillChange: getComputedStyle(video).willChange,
+      stageTransform: getComputedStyle(stage).transform,
+      stageWillChange: getComputedStyle(stage).willChange,
       contentTransform: getComputedStyle(content).transform,
     };
   });
 }
 
-async function readVideoTranslation(page: Page) {
-  return page.locator('.background-video').evaluate((element) => {
+async function readBackgroundLayerPresentation(page: Page) {
+  return page.locator('[data-background-stage]').evaluate((stage) => {
+    const opacityOf = (layer: 'poster' | 'intro' | 'loop') => {
+      const element = stage.querySelector<HTMLElement>(
+        `[data-background-layer="${layer}"]`,
+      );
+
+      if (!element) {
+        throw new Error(`Missing background layer: ${layer}`);
+      }
+
+      return Number.parseFloat(getComputedStyle(element).opacity);
+    };
+
+    return {
+      phase: stage.getAttribute('data-background-phase'),
+      handoffSource: stage.getAttribute('data-background-handoff-source'),
+      posterOpacity: opacityOf('poster'),
+      introOpacity: opacityOf('intro'),
+      loopOpacity: opacityOf('loop'),
+    };
+  });
+}
+
+async function readBackgroundTranslation(page: Page) {
+  return page.locator('[data-background-stage]').evaluate((element) => {
     const transform = getComputedStyle(element).transform;
     if (transform === 'none') {
       return { x: 0, y: 0 };
@@ -140,8 +166,10 @@ async function readVideoTranslation(page: Page) {
   });
 }
 
-async function expectVideoCoversViewport(page: Page) {
-  const coverage = await page.locator('.background-video').evaluate((element) => {
+async function expectBackgroundCoversViewport(page: Page) {
+  const coverage = await page
+    .locator('[data-background-stage]')
+    .evaluate((element) => {
     const rect = element.getBoundingClientRect();
     return {
       left: rect.left,
@@ -151,7 +179,7 @@ async function expectVideoCoversViewport(page: Page) {
       viewportWidth: window.innerWidth,
       viewportHeight: window.innerHeight,
     };
-  });
+    });
 
   expect(coverage.left).toBeLessThanOrEqual(0);
   expect(coverage.top).toBeLessThanOrEqual(0);
@@ -200,33 +228,43 @@ test('renders the complete transparent resume, metadata, and authorized PDF', as
     description,
   );
 
-  await expect(page.locator('video')).toHaveCount(1);
+  await expect(page.locator('[data-background-stage]')).toHaveCount(1);
+  await expect(page.locator('video')).toHaveCount(2);
+  await expect(page.locator('[data-background-layer="poster"]')).toHaveCount(
+    1,
+  );
   await expect(page.locator('[data-background-overlay]')).toHaveCount(1);
   const fixedLayers = await page.evaluate(() => {
-    const video = document.querySelector('video');
+    const stage = document.querySelector('[data-background-stage]');
+    const intro = document.querySelector('[data-background-layer="intro"]');
     const overlay = document.querySelector('[data-background-overlay]');
-    if (!video || !overlay) {
+    if (!stage || !intro || !overlay) {
       return null;
     }
-    const videoStyle = getComputedStyle(video);
+    const stageStyle = getComputedStyle(stage);
+    const introStyle = getComputedStyle(intro);
     const overlayStyle = getComputedStyle(overlay);
     return {
-      videoPosition: videoStyle.position,
-      videoZIndex: videoStyle.zIndex,
-      videoObjectFit: videoStyle.objectFit,
+      stagePosition: stageStyle.position,
+      stageZIndex: stageStyle.zIndex,
+      introPosition: introStyle.position,
+      introObjectFit: introStyle.objectFit,
       overlayPosition: overlayStyle.position,
       overlayZIndex: overlayStyle.zIndex,
-      videoPointerEvents: videoStyle.pointerEvents,
+      stagePointerEvents: stageStyle.pointerEvents,
+      introPointerEvents: introStyle.pointerEvents,
       overlayPointerEvents: overlayStyle.pointerEvents,
     };
   });
   expect(fixedLayers).toEqual({
-    videoPosition: 'fixed',
-    videoZIndex: '0',
-    videoObjectFit: 'cover',
+    stagePosition: 'fixed',
+    stageZIndex: '0',
+    introPosition: 'absolute',
+    introObjectFit: 'cover',
     overlayPosition: 'fixed',
     overlayZIndex: '1',
-    videoPointerEvents: 'none',
+    stagePointerEvents: 'none',
+    introPointerEvents: 'none',
     overlayPointerEvents: 'none',
   });
 
@@ -305,22 +343,24 @@ test('enhances the fixed video without filtering the transparent resume content'
   await page.goto('/', { waitUntil: 'domcontentloaded' });
 
   const visualState = await page.evaluate(() => {
-    const video = document.querySelector<HTMLVideoElement>('.background-video');
+    const stage = document.querySelector<HTMLElement>(
+      '[data-background-stage]',
+    );
     const overlay = document.querySelector<HTMLElement>(
       '[data-background-overlay]',
     );
     const content = document.querySelector<HTMLElement>('.site-content');
 
-    if (!video || !overlay || !content) {
+    if (!stage || !overlay || !content) {
       return null;
     }
 
-    const videoStyle = getComputedStyle(video);
+    const stageStyle = getComputedStyle(stage);
     const overlayStyle = getComputedStyle(overlay);
     const contentStyle = getComputedStyle(content);
 
     return {
-      videoFilter: videoStyle.filter,
+      backgroundFilter: stageStyle.filter,
       overlayBackgroundColor: overlayStyle.backgroundColor,
       overlayBackgroundImage: overlayStyle.backgroundImage,
       contentFilter: contentStyle.filter,
@@ -332,9 +372,9 @@ test('enhances the fixed video without filtering the transparent resume content'
   });
 
   expect(visualState).not.toBeNull();
-  expect(visualState?.videoFilter).toMatch(/brightness\(/);
-  expect(visualState?.videoFilter).toMatch(/contrast\(/);
-  expect(visualState?.videoFilter).toMatch(/saturate\(/);
+  expect(visualState?.backgroundFilter).toMatch(/brightness\(/);
+  expect(visualState?.backgroundFilter).toMatch(/contrast\(/);
+  expect(visualState?.backgroundFilter).toMatch(/saturate\(/);
   expect(visualState?.contentFilter).toBe('none');
   expect(
     visualState?.sectionBackgrounds.every(
@@ -357,13 +397,14 @@ test('moves only the background within the approved parallax bounds for a fine d
   await page.setViewportSize({ width: 1440, height: 900 });
   await page.goto('/', { waitUntil: 'domcontentloaded' });
 
-  const video = page.locator('.background-video');
-  await expect(video).toHaveAttribute('data-media-state', 'failed');
-  await video.dispatchEvent('loadeddata');
-  await expect(video).toHaveAttribute('data-media-state', 'ready');
+  const stage = page.locator('[data-background-stage]');
+  const intro = page.locator('[data-background-layer="intro"]');
+  await expect(intro).toHaveAttribute('data-media-state', 'failed');
+  await intro.dispatchEvent('loadeddata');
+  await expect(intro).toHaveAttribute('data-media-state', 'ready');
 
   const before = await readBackgroundMotion(page);
-  await expect(video).toHaveAttribute('data-pointer-motion', 'enabled');
+  await expect(stage).toHaveAttribute('data-pointer-motion', 'enabled');
 
   await page.mouse.move(1439, 1);
   await expect
@@ -377,8 +418,8 @@ test('moves only the background within the approved parallax bounds for a fine d
     )
     .toBeGreaterThanOrEqual(15);
   await expect
-    .poll(async () => (await readBackgroundMotion(page))?.videoTransform)
-    .not.toBe(before?.videoTransform);
+    .poll(async () => (await readBackgroundMotion(page))?.stageTransform)
+    .not.toBe(before?.stageTransform);
 
   const after = await readBackgroundMotion(page);
   const shiftX = Number.parseFloat(after?.shiftX ?? 'NaN');
@@ -398,8 +439,8 @@ test('eases the background toward the pointer and smoothly recenters after it le
   await page.setViewportSize({ width: 1440, height: 900 });
   await page.goto('/', { waitUntil: 'domcontentloaded' });
 
-  const video = page.locator('.background-video');
-  await video.dispatchEvent('loadeddata');
+  const intro = page.locator('[data-background-layer="intro"]');
+  await intro.dispatchEvent('loadeddata');
   await page.evaluate(() => {
     window.dispatchEvent(
       new PointerEvent('pointermove', {
@@ -450,8 +491,9 @@ test('preserves the active background motion when the video becomes ready', asyn
   await page.setViewportSize({ width: 1440, height: 900 });
   await page.goto('/', { waitUntil: 'domcontentloaded' });
 
-  const video = page.locator('.background-video');
-  await expect(video).toHaveAttribute('data-pointer-motion', 'enabled');
+  const stage = page.locator('[data-background-stage]');
+  const intro = page.locator('[data-background-layer="intro"]');
+  await expect(stage).toHaveAttribute('data-pointer-motion', 'enabled');
   await page.mouse.move(1439, 1);
   await expect
     .poll(async () =>
@@ -459,8 +501,8 @@ test('preserves the active background motion when the video becomes ready', asyn
     )
     .toBeLessThan(-20);
 
-  await video.dispatchEvent('loadeddata');
-  await expect(video).toHaveAttribute('data-media-state', 'ready');
+  await intro.dispatchEvent('loadeddata');
+  await expect(intro).toHaveAttribute('data-media-state', 'ready');
   await waitForAnimationFrame(page);
 
   expect(
@@ -475,27 +517,28 @@ test('keeps visible background motion in a narrow fine-pointer browser pane', as
   await page.setViewportSize({ width: 440, height: 785 });
   await page.goto('/', { waitUntil: 'domcontentloaded' });
 
-  const video = page.locator('.background-video');
-  await video.dispatchEvent('loadeddata');
-  await expect(video).toHaveAttribute('data-pointer-motion', 'enabled');
+  const stage = page.locator('[data-background-stage]');
+  const intro = page.locator('[data-background-layer="intro"]');
+  await intro.dispatchEvent('loadeddata');
+  await expect(stage).toHaveAttribute('data-pointer-motion', 'enabled');
 
   await page.mouse.move(439, 1);
   await expect
-    .poll(async () => (await readVideoTranslation(page)).x)
+    .poll(async () => (await readBackgroundTranslation(page)).x)
     .toBeLessThanOrEqual(-20);
   await expect
-    .poll(async () => (await readVideoTranslation(page)).y)
+    .poll(async () => (await readBackgroundTranslation(page)).y)
     .toBeGreaterThanOrEqual(10);
-  await expectVideoCoversViewport(page);
+  await expectBackgroundCoversViewport(page);
 
   await page.mouse.move(1, 784);
   await expect
-    .poll(async () => (await readVideoTranslation(page)).x)
+    .poll(async () => (await readBackgroundTranslation(page)).x)
     .toBeGreaterThanOrEqual(20);
   await expect
-    .poll(async () => (await readVideoTranslation(page)).y)
+    .poll(async () => (await readBackgroundTranslation(page)).y)
     .toBeLessThanOrEqual(-10);
-  await expectVideoCoversViewport(page);
+  await expectBackgroundCoversViewport(page);
 });
 
 test('shows a custom cursor whose ring visibly trails the mouse and grows over actions', async ({
@@ -851,22 +894,28 @@ test('disables cursor and background motion when reduced motion changes after lo
     state.__videoPauseCalls = 0;
     state.__videoPlayCalls = 0;
     const originalPause = HTMLMediaElement.prototype.pause;
-    const originalPlay = HTMLMediaElement.prototype.play;
     HTMLMediaElement.prototype.pause = function pauseWithObservation() {
       state.__videoPauseCalls = (state.__videoPauseCalls ?? 0) + 1;
       return originalPause.call(this);
     };
     HTMLMediaElement.prototype.play = function playWithObservation() {
       state.__videoPlayCalls = (state.__videoPlayCalls ?? 0) + 1;
-      return originalPlay.call(this);
+      return Promise.resolve();
     };
   });
   await page.goto('/', { waitUntil: 'domcontentloaded' });
 
-  const video = page.locator('.background-video');
+  const stage = page.locator('[data-background-stage]');
+  const poster = page.locator('[data-background-layer="poster"]');
+  const intro = page.locator('[data-background-layer="intro"]');
+  const loop = page.locator('[data-background-layer="loop"]');
   const cursor = page.locator('[data-custom-cursor-layer]');
-  await video.dispatchEvent('loadeddata');
-  await expect(video).toHaveAttribute('data-pointer-motion', 'enabled');
+  await expect(poster).toHaveAttribute('data-media-state', 'ready', {
+    timeout: 15_000,
+  });
+  await intro.dispatchEvent('loadeddata');
+  await loop.dispatchEvent('loadeddata');
+  await expect(stage).toHaveAttribute('data-pointer-motion', 'enabled');
   await expect(cursor).toHaveAttribute('data-enabled', 'true');
 
   await page.mouse.move(1296, 180);
@@ -883,7 +932,7 @@ test('disables cursor and background motion when reduced motion changes after lo
   );
 
   await page.emulateMedia({ reducedMotion: 'reduce' });
-  await expect(video).toHaveAttribute('data-pointer-motion', 'disabled');
+  await expect(stage).toHaveAttribute('data-pointer-motion', 'disabled');
   await expect(cursor).toHaveAttribute('data-enabled', 'false');
   await expect(cursor).toBeHidden();
   await expect(page.locator('html')).not.toHaveAttribute(
@@ -908,8 +957,8 @@ test('disables cursor and background motion when reduced motion changes after lo
       shiftX: '0px',
       shiftY: '0px',
       lensOpacity: '0',
-      videoTransform: 'none',
-      videoWillChange: 'auto',
+      stageTransform: 'none',
+      stageWillChange: 'auto',
       lensDisplay: 'none',
     });
 
@@ -924,7 +973,33 @@ test('disables cursor and background motion when reduced motion changes after lo
         .__videoPlayCalls ?? 0,
   );
   await page.emulateMedia({ reducedMotion: 'no-preference' });
-  await expect(video).toHaveAttribute('data-pointer-motion', 'enabled');
+  await expect(stage).toHaveAttribute('data-background-phase', 'handoff');
+  await expect(stage).toHaveAttribute(
+    'data-background-handoff-source',
+    'poster',
+  );
+  await expect
+    .poll(() => readBackgroundLayerPresentation(page))
+    .toEqual({
+      phase: 'handoff',
+      handoffSource: 'poster',
+      posterOpacity: 1,
+      introOpacity: 0,
+      loopOpacity: 0,
+    });
+
+  await loop.dispatchEvent('playing');
+  await expect(stage).toHaveAttribute('data-background-phase', 'loop');
+  await expect
+    .poll(() => readBackgroundLayerPresentation(page))
+    .toEqual({
+      phase: 'loop',
+      handoffSource: 'poster',
+      posterOpacity: 1,
+      introOpacity: 0,
+      loopOpacity: 1,
+    });
+  await expect(stage).toHaveAttribute('data-pointer-motion', 'enabled');
   await expect(cursor).toHaveAttribute('data-enabled', 'true');
   await expect(page.locator('html')).not.toHaveAttribute(
     'data-custom-cursor',
@@ -947,6 +1022,69 @@ test('disables cursor and background motion when reduced motion changes after lo
       ),
     )
     .toBeGreaterThan(playCallsBeforeRestore);
+});
+
+test('keeps the mature poster visible after an initially reduced visit until the loop is playing', async ({
+  page,
+}, testInfo) => {
+  test.skip(testInfo.project.name !== 'chromium-desktop');
+  await page.emulateMedia({ reducedMotion: 'reduce' });
+  await page.addInitScript(() => {
+    HTMLMediaElement.prototype.play = function controlledPlayback() {
+      return Promise.resolve();
+    };
+  });
+  await page.goto('/', { waitUntil: 'domcontentloaded' });
+
+  const stage = page.locator('[data-background-stage]');
+  const poster = page.locator('[data-background-layer="poster"]');
+  const loop = page.locator('[data-background-layer="loop"]');
+
+  await expect(stage).toHaveAttribute('data-background-phase', 'poster');
+  await expect(poster).toHaveAttribute('data-media-state', 'ready', {
+    timeout: 15_000,
+  });
+  await expect
+    .poll(() => readBackgroundLayerPresentation(page))
+    .toEqual({
+      phase: 'poster',
+      handoffSource: 'intro',
+      posterOpacity: 1,
+      introOpacity: 0,
+      loopOpacity: 0,
+    });
+
+  await expect(loop).toHaveAttribute('data-media-state', 'failed');
+  await loop.dispatchEvent('loadeddata');
+  await expect(loop).toHaveAttribute('data-media-state', 'ready');
+  await page.emulateMedia({ reducedMotion: 'no-preference' });
+
+  await expect(stage).toHaveAttribute('data-background-phase', 'handoff');
+  await expect(stage).toHaveAttribute(
+    'data-background-handoff-source',
+    'poster',
+  );
+  await expect
+    .poll(() => readBackgroundLayerPresentation(page))
+    .toEqual({
+      phase: 'handoff',
+      handoffSource: 'poster',
+      posterOpacity: 1,
+      introOpacity: 0,
+      loopOpacity: 0,
+    });
+
+  await loop.dispatchEvent('playing');
+  await expect(stage).toHaveAttribute('data-background-phase', 'loop');
+  await expect
+    .poll(() => readBackgroundLayerPresentation(page))
+    .toEqual({
+      phase: 'loop',
+      handoffSource: 'poster',
+      posterOpacity: 1,
+      introOpacity: 0,
+      loopOpacity: 1,
+    });
 });
 
 test('keeps the native cursor when pointer media-query listeners are unavailable', async ({
@@ -979,7 +1117,7 @@ test('keeps the native cursor when pointer media-query listeners are unavailable
   expect(
     await page.locator('body').evaluate((element) => getComputedStyle(element).cursor),
   ).not.toBe('none');
-  await expect(page.locator('.background-video')).toHaveAttribute(
+  await expect(page.locator('[data-background-stage]')).toHaveAttribute(
     'data-pointer-motion',
     'disabled',
   );
@@ -994,8 +1132,10 @@ test('reveals video detail only when the pointer is outside the main reading col
   await page.setViewportSize({ width: 1440, height: 900 });
   await page.goto('/', { waitUntil: 'domcontentloaded' });
 
-  await page.locator('.background-video').dispatchEvent('loadeddata');
-  await expect(page.locator('.background-video')).toHaveAttribute(
+  await page
+    .locator('[data-background-layer="intro"]')
+    .dispatchEvent('loadeddata');
+  await expect(page.locator('[data-background-layer="intro"]')).toHaveAttribute(
     'data-media-state',
     'ready',
   );
@@ -1054,9 +1194,9 @@ test('briefly boosts the detail lens during fast pointer movement and then relax
   await page.setViewportSize({ width: 1440, height: 900 });
   await page.goto('/', { waitUntil: 'domcontentloaded' });
 
-  const video = page.locator('.background-video');
-  await video.dispatchEvent('loadeddata');
-  await expect(video).toHaveAttribute('data-media-state', 'ready');
+  const intro = page.locator('[data-background-layer="intro"]');
+  await intro.dispatchEvent('loadeddata');
+  await expect(intro).toHaveAttribute('data-media-state', 'ready');
 
   const measuredEnergy = await page.evaluate(() => {
     const overlay = document.querySelector<HTMLElement>(
@@ -1119,7 +1259,9 @@ test('recenters the background and hides the detail lens when the pointer leaves
   await page.setViewportSize({ width: 1440, height: 900 });
   await page.goto('/', { waitUntil: 'domcontentloaded' });
 
-  await page.locator('.background-video').dispatchEvent('loadeddata');
+  await page
+    .locator('[data-background-layer="intro"]')
+    .dispatchEvent('loadeddata');
   await page.mouse.move(1296, 180);
   await expect
     .poll(async () =>
@@ -1150,7 +1292,7 @@ test('ignores touch pointer events on mixed-input desktop devices', async ({
   await page.setViewportSize({ width: 1440, height: 900 });
   await page.goto('/', { waitUntil: 'domcontentloaded' });
 
-  await expect(page.locator('.background-video')).toHaveAttribute(
+  await expect(page.locator('[data-background-stage]')).toHaveAttribute(
     'data-pointer-motion',
     'enabled',
   );
@@ -1176,7 +1318,7 @@ test('keeps pointer motion disabled in the coarse-pointer mobile context', async
   test.skip(testInfo.project.name !== 'chromium-mobile');
   await page.goto('/', { waitUntil: 'domcontentloaded' });
 
-  await expect(page.locator('.background-video')).toHaveAttribute(
+  await expect(page.locator('[data-background-stage]')).toHaveAttribute(
     'data-pointer-motion',
     'disabled',
   );
@@ -1447,12 +1589,24 @@ test('keeps content readable when media and motion are unavailable', async ({
   });
   await page.goto('/', { waitUntil: 'domcontentloaded' });
 
-  const video = page.locator('video');
-  await expect(video).toHaveAttribute('data-media-state', 'failed');
-  await expect(video).toBeHidden();
-  expect(await video.evaluate((element) => (element as HTMLVideoElement).paused)).toBe(
-    true,
-  );
+  const stage = page.locator('[data-background-stage]');
+  const videos = page.locator('[data-background-stage] video');
+  await expect(videos).toHaveCount(2);
+  await expect
+    .poll(() =>
+      videos.evaluateAll((elements) =>
+        elements.every(
+          (element) => element.getAttribute('data-media-state') === 'failed',
+        ),
+      ),
+    )
+    .toBe(true);
+  await expect(stage).toHaveAttribute('data-background-phase', 'poster');
+  expect(
+    await videos.evaluateAll((elements) =>
+      elements.every((element) => (element as HTMLVideoElement).paused),
+    ),
+  ).toBe(true);
   expect(
     await page.evaluate(
       () =>
@@ -1460,7 +1614,7 @@ test('keeps content readable when media and motion are unavailable', async ({
           .__videoPauseCalls ?? 0,
     ),
   ).toBeGreaterThan(0);
-  await expect(video).toHaveAttribute('data-pointer-motion', 'disabled');
+  await expect(stage).toHaveAttribute('data-pointer-motion', 'disabled');
   const cursor = page.locator('[data-custom-cursor-layer]');
   await expect(cursor).toHaveCount(1);
   await expect(cursor).toHaveAttribute('data-enabled', 'false');
@@ -1477,8 +1631,8 @@ test('keeps content readable when media and motion are unavailable', async ({
   await waitForAnimationFrame(page);
   expect(await readBackgroundMotion(page)).toEqual(motionBeforePointer);
   expect(await readBackgroundMotion(page)).toMatchObject({
-    videoTransform: 'none',
-    videoWillChange: 'auto',
+    stageTransform: 'none',
+    stageWillChange: 'auto',
     lensDisplay: 'none',
   });
   expect(

@@ -122,7 +122,16 @@ describe('resume site', () => {
       expect(link).toHaveAttribute('download', '何佳兴_AI产品经理_简历.pdf');
     });
     expect(container.textContent).not.toMatch(/(?:\+?86[-\s]?)?1[3-9]\d{9}/);
-    expect(container.querySelectorAll('video')).toHaveLength(1);
+    expect(container.querySelectorAll('[data-background-stage]')).toHaveLength(
+      1,
+    );
+    expect(container.querySelectorAll('video')).toHaveLength(2);
+    expect(
+      container.querySelectorAll('[data-background-layer="intro"]'),
+    ).toHaveLength(1);
+    expect(
+      container.querySelectorAll('[data-background-layer="loop"]'),
+    ).toHaveLength(1);
     expect(container.querySelectorAll('[data-background-overlay]')).toHaveLength(
       1,
     );

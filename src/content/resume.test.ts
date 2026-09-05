@@ -9,7 +9,7 @@ import {
   profile,
   projects,
   resumeDownload,
-  VIDEO_SOURCE,
+  backgroundMedia,
 } from './resume';
 
 const metricLocations = (needle: string) => {
@@ -37,9 +37,15 @@ describe('approved resume content', () => {
   it('resolves public assets inside the GitHub Pages project path', () => {
     const pagesUrl = new URL('https://3330661249.github.io/hejiaxing/');
 
-    expect(new URL(VIDEO_SOURCE, pagesUrl).pathname).toBe(
-      '/hejiaxing/media/background-loop.mp4',
-    );
+    expect(
+      Object.values(backgroundMedia).map(
+        (source) => new URL(source, pagesUrl).pathname,
+      ),
+    ).toEqual([
+      '/hejiaxing/media/background-orb-poster.webp',
+      '/hejiaxing/media/background-intro.mp4',
+      '/hejiaxing/media/background-orbit-loop.mp4',
+    ]);
     expect(new URL(resumeDownload.href, pagesUrl).pathname).toBe(
       '/hejiaxing/he-jiaxing-ai-product-manager-resume.pdf',
     );

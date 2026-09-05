@@ -33,7 +33,11 @@ export type Practice = {
   text: string;
 };
 
-export const VIDEO_SOURCE = './media/background-loop.mp4';
+export const backgroundMedia = {
+  poster: './media/background-orb-poster.webp',
+  intro: './media/background-intro.mp4',
+  loop: './media/background-orbit-loop.mp4',
+} as const;
 
 export const resumeDownload = {
   href: './he-jiaxing-ai-product-manager-resume.pdf',

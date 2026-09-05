@@ -1,5 +1,5 @@
-import { useEffect, useRef, useState } from 'react';
-import { VIDEO_SOURCE } from '../content/resume';
+import { useCallback, useEffect, useRef, useState } from 'react';
+import { backgroundMedia } from '../content/resume';
 import {
   FINE_POINTER_QUERY,
   REDUCED_MOTION_QUERY,
@@ -19,6 +19,23 @@ const FULL_MOTION_SPEED = 1.6;
 const MOTION_ENERGY_DECAY_PER_MS = 1 / 360;
 const DEFAULT_FRAME_DURATION = 1000 / 60;
 const MAX_FRAME_DURATION = 32;
+
+type BackgroundPhase =
+  | 'intro'
+  | 'handoff'
+  | 'loop'
+  | 'poster'
+  | 'failed';
+
+type MediaState = 'loading' | 'ready' | 'failed';
+type HandoffSource = 'intro' | 'poster';
+
+function prefersReducedMotion() {
+  return (
+    typeof window.matchMedia === 'function' &&
+    window.matchMedia(REDUCED_MOTION_QUERY).matches
+  );
+}
 
 function smoothstep(start: number, end: number, value: number) {
   const progress = Math.min(1, Math.max(0, (value - start) / (end - start)));
@@ -54,19 +71,185 @@ const CENTERED_VISUAL_STATE: BackgroundVisualState = {
 };
 
 export function BackgroundVideo() {
-  const videoRef = useRef<HTMLVideoElement>(null);
+  const initialReducedMotionRef = useRef<boolean | null>(null);
+  if (initialReducedMotionRef.current === null) {
+    initialReducedMotionRef.current = prefersReducedMotion();
+  }
+
+  const stageRef = useRef<HTMLDivElement>(null);
+  const introRef = useRef<HTMLVideoElement>(null);
+  const loopRef = useRef<HTMLVideoElement>(null);
   const overlayRef = useRef<HTMLDivElement>(null);
-  const mediaStateRef = useRef<'loading' | 'ready' | 'failed'>('loading');
-  const [mediaState, setMediaState] = useState<'loading' | 'ready' | 'failed'>(
-    'loading',
+  const reducedMotionRef = useRef(initialReducedMotionRef.current);
+  const introConsumedRef = useRef(initialReducedMotionRef.current);
+  const introPlayRequestedRef = useRef(false);
+  const loopPlayPendingRef = useRef(false);
+  const loopPlayAttemptRef = useRef(0);
+  const mountedRef = useRef(true);
+  const visibleMediaReadyRef = useRef(false);
+  const introStateRef = useRef<MediaState>('loading');
+  const loopStateRef = useRef<MediaState>('loading');
+  const posterStateRef = useRef<MediaState>('loading');
+  const [phase, setPhaseState] = useState<BackgroundPhase>(
+    initialReducedMotionRef.current ? 'poster' : 'intro',
   );
+  const phaseRef = useRef<BackgroundPhase>(phase);
+  const [introState, setIntroState] = useState<MediaState>('loading');
+  const [loopState, setLoopState] = useState<MediaState>('loading');
+  const [posterState, setPosterState] = useState<MediaState>('loading');
+  const [handoffSource, setHandoffSource] =
+    useState<HandoffSource>('intro');
   const [pointerMotionEnabled, setPointerMotionEnabled] = useState(false);
 
+  const setPhase = useCallback((nextPhase: BackgroundPhase) => {
+    phaseRef.current = nextPhase;
+    setPhaseState(nextPhase);
+  }, []);
+
+  const showPosterFallback = useCallback(() => {
+    loopPlayAttemptRef.current += 1;
+    loopPlayPendingRef.current = false;
+    visibleMediaReadyRef.current = posterStateRef.current === 'ready';
+    setPhase(posterStateRef.current === 'failed' ? 'failed' : 'poster');
+  }, [setPhase]);
+
+  const requestLoopPlayback = useCallback((source: HandoffSource) => {
+    if (reducedMotionRef.current) {
+      showPosterFallback();
+      return;
+    }
+
+    if (loopStateRef.current === 'failed') {
+      showPosterFallback();
+      return;
+    }
+
+    const loop = loopRef.current;
+    if (!loop) {
+      showPosterFallback();
+      return;
+    }
+
+    if (loopPlayPendingRef.current) {
+      return;
+    }
+
+    const attempt = loopPlayAttemptRef.current + 1;
+    loopPlayAttemptRef.current = attempt;
+    loopPlayPendingRef.current = true;
+    setHandoffSource(source);
+    setPhase('handoff');
+
+    try {
+      const playback = loop.play();
+      void playback?.catch(() => {
+        if (
+          mountedRef.current &&
+          attempt === loopPlayAttemptRef.current &&
+          phaseRef.current === 'handoff' &&
+          !reducedMotionRef.current
+        ) {
+          showPosterFallback();
+        }
+      });
+    } catch {
+      showPosterFallback();
+    }
+  }, [setPhase, showPosterFallback]);
+
   useEffect(() => {
-    const video = videoRef.current;
+    mountedRef.current = true;
+
+    return () => {
+      mountedRef.current = false;
+      loopPlayAttemptRef.current += 1;
+      loopPlayPendingRef.current = false;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (typeof window.matchMedia !== 'function') {
+      return;
+    }
+
+    const reducedMotionQuery = window.matchMedia(REDUCED_MOTION_QUERY);
+    let wasReducedMotion = reducedMotionQuery.matches;
+
+    const syncMediaMotion = () => {
+      const isReducedMotion = reducedMotionQuery.matches;
+      reducedMotionRef.current = isReducedMotion;
+
+      if (isReducedMotion) {
+        introConsumedRef.current = true;
+        loopPlayAttemptRef.current += 1;
+        loopPlayPendingRef.current = false;
+        introRef.current?.pause();
+        loopRef.current?.pause();
+        visibleMediaReadyRef.current = posterStateRef.current === 'ready';
+        setPhase(posterStateRef.current === 'failed' ? 'failed' : 'poster');
+      } else if (wasReducedMotion) {
+        introConsumedRef.current = true;
+        requestLoopPlayback('poster');
+      }
+
+      wasReducedMotion = isReducedMotion;
+    };
+
+    const unsubscribe = subscribeToMediaQuery(
+      reducedMotionQuery,
+      syncMediaMotion,
+    );
+    syncMediaMotion();
+
+    return () => unsubscribe?.();
+  }, [requestLoopPlayback, setPhase]);
+
+  const handleIntroUnavailable = useCallback(() => {
+    introStateRef.current = 'failed';
+    setIntroState('failed');
+    if (phaseRef.current === 'intro') {
+      introConsumedRef.current = true;
+      requestLoopPlayback('poster');
+    }
+  }, [requestLoopPlayback]);
+
+  useEffect(() => {
+    if (
+      reducedMotionRef.current ||
+      phaseRef.current !== 'intro' ||
+      introPlayRequestedRef.current
+    ) {
+      return;
+    }
+
+    const intro = introRef.current;
+    if (!intro) {
+      handleIntroUnavailable();
+      return;
+    }
+
+    introPlayRequestedRef.current = true;
+    try {
+      const playback = intro.play();
+      void playback?.catch(() => {
+        if (
+          mountedRef.current &&
+          phaseRef.current === 'intro' &&
+          !reducedMotionRef.current
+        ) {
+          handleIntroUnavailable();
+        }
+      });
+    } catch {
+      handleIntroUnavailable();
+    }
+  }, [handleIntroUnavailable]);
+
+  useEffect(() => {
+    const stage = stageRef.current;
     const overlay = overlayRef.current;
 
-    if (!video || !overlay) {
+    if (!stage || !overlay) {
       return;
     }
 
@@ -84,11 +267,11 @@ export function BackgroundVideo() {
       `${Number(value.toFixed(2))}${unit}`;
 
     const applyVisualState = (state: BackgroundVisualState) => {
-      video.style.setProperty(
+      stage.style.setProperty(
         '--background-shift-x',
         formatUnit(state.shiftX, 'px'),
       );
-      video.style.setProperty(
+      stage.style.setProperty(
         '--background-shift-y',
         formatUnit(state.shiftY, 'px'),
       );
@@ -212,24 +395,12 @@ export function BackgroundVideo() {
 
     const pointerMotionQuery = window.matchMedia(FINE_POINTER_QUERY);
     const reducedMotionQuery = window.matchMedia(REDUCED_MOTION_QUERY);
-    let wasReducedMotion = reducedMotionQuery.matches;
     const canUsePointerMotion = () =>
       pointerMotionQuery.matches && !reducedMotionQuery.matches;
 
     const syncPointerCapability = () => {
-      const isReducedMotion = reducedMotionQuery.matches;
       const isEnabled = canUsePointerMotion();
       setPointerMotionEnabled(isEnabled);
-      if (isReducedMotion) {
-        video.pause();
-      } else if (wasReducedMotion) {
-        try {
-          void video.play().catch(() => undefined);
-        } catch {
-          // Autoplay can be unavailable; the static poster remains usable.
-        }
-      }
-      wasReducedMotion = isReducedMotion;
       if (!isEnabled) {
         lensBaseOpacity = 0;
         clearMotionEnergy();
@@ -276,7 +447,7 @@ export function BackgroundVideo() {
       lastPointerTime = event.timeStamp;
       applyMotionEnergy();
       lensBaseOpacity =
-        mediaStateRef.current === 'ready'
+        visibleMediaReadyRef.current
           ? smoothstep(LENS_FADE_START, LENS_FADE_END, horizontalProgress)
           : 0;
 
@@ -321,9 +492,6 @@ export function BackgroundVideo() {
       lensBaseOpacity = 0;
       clearMotionEnergy();
       applyVisualState(CENTERED_VISUAL_STATE);
-      if (reducedMotionQuery.matches) {
-        video.pause();
-      }
       return () => {
         if (animationFrame !== null) {
           window.cancelAnimationFrame(animationFrame);
@@ -366,28 +534,107 @@ export function BackgroundVideo() {
 
   return (
     <>
-      <video
-        ref={videoRef}
-        className="background-video"
-        src={VIDEO_SOURCE}
-        autoPlay
-        muted
-        loop
-        playsInline
-        preload="auto"
-        aria-hidden="true"
-        data-media-state={mediaState}
+      <div
+        ref={stageRef}
+        className="background-media-stage"
+        data-background-stage=""
+        data-background-phase={phase}
+        data-background-handoff-source={handoffSource}
         data-pointer-motion={pointerMotionEnabled ? 'enabled' : 'disabled'}
-        hidden={mediaState === 'failed'}
-        onLoadedData={() => {
-          mediaStateRef.current = 'ready';
-          setMediaState('ready');
-        }}
-        onError={() => {
-          mediaStateRef.current = 'failed';
-          setMediaState('failed');
-        }}
-      />
+        aria-hidden="true"
+      >
+        <img
+          className="background-media-layer background-media-poster"
+          src={backgroundMedia.poster}
+          alt=""
+          data-background-layer="poster"
+          data-media-state={posterState}
+          onLoad={() => {
+            posterStateRef.current = 'ready';
+            setPosterState('ready');
+            if (phaseRef.current === 'poster') {
+              visibleMediaReadyRef.current = true;
+            }
+          }}
+          onError={() => {
+            posterStateRef.current = 'failed';
+            setPosterState('failed');
+            if (phaseRef.current === 'poster') {
+              visibleMediaReadyRef.current = false;
+              setPhase('failed');
+            }
+          }}
+        />
+        <video
+          ref={loopRef}
+          className="background-media-layer background-video background-video-loop"
+          src={backgroundMedia.loop}
+          muted
+          loop
+          playsInline
+          preload="auto"
+          aria-hidden="true"
+          data-background-layer="loop"
+          data-media-state={loopState}
+          onLoadedData={() => {
+            loopStateRef.current = 'ready';
+            setLoopState('ready');
+          }}
+          onPlaying={() => {
+            loopPlayAttemptRef.current += 1;
+            loopPlayPendingRef.current = false;
+            loopStateRef.current = 'ready';
+            setLoopState('ready');
+            if (
+              phaseRef.current === 'handoff' &&
+              introConsumedRef.current &&
+              !reducedMotionRef.current
+            ) {
+              visibleMediaReadyRef.current = true;
+              setPhase('loop');
+            }
+          }}
+          onError={() => {
+            loopPlayAttemptRef.current += 1;
+            loopPlayPendingRef.current = false;
+            loopStateRef.current = 'failed';
+            setLoopState('failed');
+            if (
+              phaseRef.current === 'handoff' ||
+              phaseRef.current === 'loop'
+            ) {
+              showPosterFallback();
+            }
+          }}
+        />
+        <video
+          ref={introRef}
+          className="background-media-layer background-video background-video-intro"
+          src={backgroundMedia.intro}
+          autoPlay={phase === 'intro'}
+          muted
+          playsInline
+          preload="auto"
+          aria-hidden="true"
+          data-background-layer="intro"
+          data-media-state={introState}
+          onLoadedData={() => {
+            introStateRef.current = 'ready';
+            setIntroState('ready');
+            if (phaseRef.current === 'intro') {
+              visibleMediaReadyRef.current = true;
+            }
+          }}
+          onEnded={() => {
+            if (phaseRef.current !== 'intro') {
+              return;
+            }
+            introConsumedRef.current = true;
+            requestLoopPlayback('intro');
+          }}
+          onError={handleIntroUnavailable}
+        />
+      </div>
       <div
         ref={overlayRef}
         className="background-overlay"
