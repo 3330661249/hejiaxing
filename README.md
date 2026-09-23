@@ -9,6 +9,7 @@
 | 想了解什么 | 入口 | 当前边界 |
 | --- | --- | --- |
 | 产品经历与项目职责 | [在线作品集](https://3330661249.github.io/hejiaxing/) | 项目指标沿用页面标注的简历口径，本仓库不提供生产数据核验 |
+| 产品判断与人机协作 | [PM Workbench 脱敏案例](docs/pm-workbench-case.md) | 虚构访谈和私有本地固定规则原型；不代表模型、Harness 集成或业务效果 |
 | 文档问答实现 | [SmartDocs-RAG](https://github.com/3330661249/smartdocs-rag) | 本地 RAG 原型；[合成制度问答案例与评测方法](https://github.com/3330661249/smartdocs-rag/blob/main/docs/policy-case-study.md)展示问题、证据与当前限制 |
 | 研究工作流实现 | [InsightFlow-Agent](https://github.com/3330661249/insightflow-agent) | 单主题研究工作流，真实效果依赖模型及搜索服务 |
 | 本站前端实现 | [`src/components`](src/components)、[`src/content/resume.ts`](src/content/resume.ts) | 内容数据与展示组件分离，支持移动端导航及减少动效偏好 |
