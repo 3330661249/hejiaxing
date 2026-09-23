@@ -862,11 +862,15 @@ a {
   font-size: 12px;
 }
 
-.practice-row > div > p:last-child {
+.practice-row > div > p {
   max-width: 680px;
   margin: 20px 0 0;
   font-size: 16px;
   line-height: 1.78;
+}
+
+.practice-row .inline-link {
+  margin-top: 14px;
 }
 
 .about-grid {
@@ -980,7 +984,7 @@ a {
   }
 
   .experience-summary,
-  .practice-row > div > p:last-child {
+  .practice-row > div > p {
     max-width: 520px;
     color: #fff;
   }
@@ -1122,7 +1126,7 @@ a {
   }
 
   .experience-summary,
-  .practice-row > div > p:last-child {
+  .practice-row > div > p {
     font-size: 15px;
   }
 

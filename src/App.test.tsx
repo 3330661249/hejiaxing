@@ -87,6 +87,11 @@ describe('resume site', () => {
     ]);
 
     const aiLab = document.querySelector('#ai-lab') as HTMLElement;
+    expect(within(aiLab).getByText('合成制度问答与评测')).toBeInTheDocument();
+    expect(within(aiLab).getByRole('link', { name: '查看案例与评测方法' })).toHaveAttribute(
+      'href',
+      'https://github.com/3330661249/smartdocs-rag/blob/main/docs/policy-case-study.md',
+    );
     expect(
       within(aiLab).getByText('Cordis 模块化 AI 工作台'),
     ).toBeInTheDocument();

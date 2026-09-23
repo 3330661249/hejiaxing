@@ -31,6 +31,8 @@ export type Experience = {
 export type Practice = {
   title: string;
   text: string;
+  href?: string;
+  linkLabel?: string;
 };
 
 export const backgroundMedia = {
@@ -161,6 +163,12 @@ export const experiences = [
 ] as const satisfies readonly Experience[];
 
 export const practices = [
+  {
+    title: '合成制度问答与评测',
+    text: '用虚构制度检验版本差异、资料缺失与引用边界；已公开 30 条分层问题和离线评分方法，真实模型效果待复核。',
+    href: 'https://github.com/3330661249/smartdocs-rag/blob/main/docs/policy-case-study.md',
+    linkLabel: '查看案例与评测方法',
+  },
   {
     title: 'Cordis 模块化 AI 工作台',
     text: '基于 DeepSeek Harness 的 Cordis 可插拔架构，组合 15+ 自研 Skills，用于个人学习和产品设计实践。',
