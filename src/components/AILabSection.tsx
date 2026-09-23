@@ -16,6 +16,11 @@ export function AILabSection() {
                 <div>
                   <h3>{practice.title}</h3>
                   <p>{practice.text}</p>
+                  {'href' in practice && (
+                    <a className="inline-link" href={practice.href} target="_blank" rel="noopener noreferrer">
+                      {practice.linkLabel}
+                    </a>
+                  )}
                 </div>
               </article>
             </FadeUp>
