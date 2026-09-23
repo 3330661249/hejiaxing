@@ -164,6 +164,12 @@ export const experiences = [
 
 export const practices = [
   {
+    title: 'PM Workbench：可追溯需求决策',
+    text: '用虚构访谈演示原话引用、人工取舍与 PRD 失效；这是本地固定规则原型，尚未接入模型或 Harness。',
+    href: 'https://github.com/3330661249/hejiaxing/blob/main/docs/pm-workbench-case.md',
+    linkLabel: '查看脱敏案例',
+  },
+  {
     title: '合成制度问答与评测',
     text: '用虚构制度检验版本差异、资料缺失与引用边界；已公开 30 条分层问题和离线评分方法，真实模型效果待复核。',
     href: 'https://github.com/3330661249/smartdocs-rag/blob/main/docs/policy-case-study.md',
